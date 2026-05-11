@@ -1,8 +1,13 @@
 import streamlit as st
 import re
 import io
+import os          # ← PHASE 3 NEW
+import json        # ← PHASE 3 NEW
+import time        # ← PHASE 3 NEW
+import openai      # ← PHASE 3 NEW
 from docx import Document
 import pdfplumber
+from dotenv import load_dotenv  # ← PHASE 3 NEW
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG - must be the first Streamlit call
@@ -18,7 +23,20 @@ st.markdown("Paste a job description and upload your resume. The engine will tai
 st.divider()
 
 # ─────────────────────────────────────────────
+# PHASE 3 NEW - OpenAI client initialization
+# ─────────────────────────────────────────────
+load_dotenv()
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ─────────────────────────────────────────────
+# PHASE 3 NEW - Session state initialization
+# ─────────────────────────────────────────────
+if "keyword_json" not in st.session_state:
+    st.session_state.keyword_json = None
+
+# ─────────────────────────────────────────────
 # SECTION 1 - JD CLEANING FUNCTION
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 def clean_jd(raw_text: str) -> str:
@@ -67,6 +85,7 @@ def clean_jd(raw_text: str) -> str:
 
 # ─────────────────────────────────────────────
 # SECTION 2 - SECTION MAP AND SHARED UTILITIES
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 SECTION_MAP = {
@@ -83,7 +102,7 @@ SECTION_MAP = {
         "projects", "personal projects", "academic projects",
         "portfolio", "project work", "key projects", "selected projects",
         "projects & portfolio", "projects and portfolio",
-        "relevant project", "relevant projects",   # ← your heading
+        "relevant project", "relevant projects",
         "featured project", "featured projects"
     ],
     "skills": [
@@ -142,6 +161,7 @@ def extract_bullet_text(line: str) -> str:
 
 # ─────────────────────────────────────────────
 # SECTION 3 - EXPERIENCE BLOCK PARSER
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 def parse_experience_block(lines: list) -> list:
@@ -233,27 +253,19 @@ def parse_experience_block(lines: list) -> list:
 
 # ─────────────────────────────────────────────
 # SECTION 4 - PROJECTS BLOCK PARSER
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 def parse_projects_block(lines: list) -> list:
-    """
-    Handles three project entry formats:
-      Format A - "Project Name" on its own line (Normal style)
-      Format B - "Project Name | Tech Stack\t[GitHub Link]" on its own line
-      Format C - "• Project Name | Tech Stack\t[GitHub Link]" - a List Paragraph
-                  that Word styled as a bullet, which parse_docx injected '• ' into.
-                  Detected by presence of ' | ' after stripping the bullet char.
-    """
     projects = []
     current_project = None
 
     TECH_PREFIXES = ["technologies:", "tech:", "tech stack:", "stack:", "tools:", "built with:"]
 
     def make_project_from_text(raw: str) -> dict:
-        """Parses a project name line (with or without embedded tech stack) into a dict."""
-        clean = re.sub(r'\[.*?\]', '', raw).strip()        # remove [GitHub Link]
-        clean = re.sub(r'https?://\S+', '', clean).strip() # remove raw URLs
-        clean = re.sub(r'\s{2,}', ' ', clean).strip()      # collapse whitespace/tabs
+        clean = re.sub(r'\[.*?\]', '', raw).strip()
+        clean = re.sub(r'https?://\S+', '', clean).strip()
+        clean = re.sub(r'\s{2,}', ' ', clean).strip()
 
         if " | " in clean:
             parts = clean.split(" | ", 1)
@@ -269,9 +281,6 @@ def parse_projects_block(lines: list) -> list:
         if is_bullet_line(line):
             bullet_text = extract_bullet_text(line)
 
-            # Format C detection: a bullet that contains ' | ' is almost certainly
-            # a project name line that Word styled as a List Paragraph.
-            # Real bullets never have ' | ' separating name from tech stack.
             if " | " in bullet_text or "[github" in bullet_text.lower():
                 if current_project is not None:
                     projects.append(current_project)
@@ -283,7 +292,6 @@ def parse_projects_block(lines: list) -> list:
 
         line_lower = line.lower()
 
-        # Standalone tech stack line (Format A second line)
         is_tech_line = any(line_lower.startswith(prefix) for prefix in TECH_PREFIXES)
         if is_tech_line:
             if current_project is not None:
@@ -293,7 +301,6 @@ def parse_projects_block(lines: list) -> list:
                         break
             continue
 
-        # Non-bullet, non-tech line = new project name (Format A or B)
         if current_project is not None:
             projects.append(current_project)
         current_project = make_project_from_text(line)
@@ -306,6 +313,7 @@ def parse_projects_block(lines: list) -> list:
 
 # ─────────────────────────────────────────────
 # SECTION 5 - MASTER LINE PARSER
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 def parse_text_lines(lines: list) -> dict:
@@ -379,6 +387,7 @@ def build_plain_text(resume_object: dict) -> str:
 
 # ─────────────────────────────────────────────
 # SECTION 6 - DOCX PARSER
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 def parse_docx(file) -> tuple[dict, str]:
@@ -401,9 +410,6 @@ def parse_docx(file) -> tuple[dict, str]:
         )
 
         if is_list_style:
-            # CRITICAL FIX: Before injecting a bullet marker, check if this
-            # list-style paragraph is actually a section heading.
-            # Some resumes apply list formatting to section headers by mistake.
             text_check = re.sub(r'[:\-_/|]+$', '', text.lower().strip()).strip()
             is_section_heading = any(
                 text_check in variants
@@ -411,9 +417,9 @@ def parse_docx(file) -> tuple[dict, str]:
             )
 
             if is_section_heading:
-                lines.append(text)  # Treat as heading, not bullet
+                lines.append(text)
             else:
-                lines.append("• " + text)  # Inject bullet marker
+                lines.append("• " + text)
         else:
             lines.append(text)
 
@@ -428,6 +434,7 @@ def parse_docx(file) -> tuple[dict, str]:
 
 # ─────────────────────────────────────────────
 # SECTION 7 - PDF PARSER
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 def parse_pdf(file) -> tuple[dict, str]:
@@ -458,7 +465,140 @@ def parse_pdf(file) -> tuple[dict, str]:
 
 
 # ─────────────────────────────────────────────
+# PHASE 3 NEW - EXTRACTION SYSTEM PROMPT
+# ─────────────────────────────────────────────
+
+EXTRACTION_SYSTEM_PROMPT = """
+You are a professional technical recruiter and senior resume analyst. Your job is to read a job description and extract exhaustive, precise keyword intelligence that a candidate will use to tailor their resume for maximum ATS and recruiter match.
+
+You must return ONLY a valid JSON object. No preamble. No explanation. No markdown fencing. No backticks. Just the raw JSON object starting with { and ending with }.
+
+The JSON object must have exactly this structure:
+
+{
+  "role_metadata": {
+    "job_title": "string",
+    "required_years_experience": "string",
+    "industry": "string"
+  },
+  "must_have": [
+    {
+      "keyword": "string",
+      "why_it_matters": "string",
+      "placement": "string - one of: Summary, Skills, Experience bullet, Project, Tools",
+      "wording_suggestion": "string"
+    }
+  ],
+  "good_to_have": [
+    {
+      "keyword": "string",
+      "why_it_matters": "string",
+      "placement": "string - one of: Summary, Skills, Experience bullet, Project, Tools",
+      "wording_suggestion": "string"
+    }
+  ],
+  "rare_but_gold": [
+    {
+      "keyword": "string",
+      "why_it_matters": "string",
+      "placement": "string - one of: Summary, Skills, Experience bullet, Project, Tools",
+      "wording_suggestion": "string"
+    }
+  ],
+  "business_language": [
+    "string - a complete phrase that mirrors how the hiring team describes the work"
+  ]
+}
+
+RULES:
+
+must_have: Every explicit tool, platform, method, skill, and responsibility named directly in the JD. Non-negotiable ATS screening terms. Be exhaustive - extract 25 to 40 keywords. Do not leave out any named tool, system, skill, or responsibility.
+
+good_to_have: Secondary skills, adjacent tools, soft skills with technical context, and responsibilities mentioned briefly or implied. Extract 15 to 25 keywords.
+
+rare_but_gold: High-signal differentiator phrases that mirror the hiring team's business language, implied priorities, or strategic framing. These are terms stronger candidates use that weaker candidates miss. Extract 10 to 15 phrases.
+
+business_language: Extract 12 to 20 complete phrases that reflect the company's exact vocabulary for describing the work. Examples: 'translate ambiguous business questions into structured analytical problems', 'identify risks, opportunities, and performance gaps', 'build and maintain actionable datasets', 'validate and reconcile data against source systems'. These phrases go directly into bullet rewrites in Phase 5.
+
+Do not duplicate keywords across categories. Do not pad with generic filler. Every keyword must be directly traceable to the JD text or to a strong inference from the role's described responsibilities.
+"""
+
+
+# ─────────────────────────────────────────────
+# PHASE 3 NEW - KEYWORD EXTRACTION FUNCTION
+# ─────────────────────────────────────────────
+
+def extract_keywords(cleaned_jd: str) -> dict:
+    messages = [
+        {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Here is the job description to analyze:\n\n{cleaned_jd}"}
+    ]
+
+    last_error = None
+
+    for attempt in range(2):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                temperature=0.2,
+                max_tokens=4000
+            )
+
+            raw_text = response.choices[0].message.content.strip()
+
+            # Strip markdown fencing if model returns it despite instructions
+            if raw_text.startswith("```"):
+                lines = raw_text.split("\n")
+                raw_text = "\n".join(lines[1:-1]).strip()
+
+            keyword_dict = json.loads(raw_text)
+
+            # Validate required top-level keys
+            required_keys = ["role_metadata", "must_have", "good_to_have", "rare_but_gold"]
+            for key in required_keys:
+                if key not in keyword_dict:
+                    raise ValueError(f"Missing required key in response: '{key}'")
+
+            # Validate categories are lists
+            for category in ["must_have", "good_to_have", "rare_but_gold"]:
+                if not isinstance(keyword_dict[category], list):
+                    raise ValueError(f"'{category}' must be a list, got {type(keyword_dict[category])}")
+
+            return keyword_dict  # ← success, exit immediately
+
+        except json.JSONDecodeError as e:
+            last_error = f"JSON parsing failed. Raw response:\n\n{raw_text}\n\nDetail: {str(e)}"
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            raise ValueError(last_error)
+
+        except ValueError as e:
+            last_error = str(e)
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            raise ValueError(last_error)
+
+        except openai.APIConnectionError:
+            raise ValueError("Could not connect to OpenAI API. Check your internet connection.")
+
+        except openai.AuthenticationError:
+            raise ValueError("OpenAI API key is invalid or missing. Check your .env file and confirm OPENAI_API_KEY is set correctly.")
+
+        except openai.RateLimitError:
+            raise ValueError("OpenAI rate limit hit. Wait 30 seconds and try again.")
+
+        except openai.APIStatusError as e:
+            raise ValueError(f"OpenAI API error {e.status_code}: {e.message}")
+
+    raise ValueError(last_error or "Extraction failed after two attempts.")
+
+
+# ─────────────────────────────────────────────
 # STREAMLIT UI - MAIN LAYOUT
+# (unchanged from Phase 2)
 # ─────────────────────────────────────────────
 
 col_left, col_right = st.columns([1, 1], gap="large")
@@ -549,16 +689,101 @@ with col_right:
                 st.json(resume_object)
 
 # ─────────────────────────────────────────────
-# PIPELINE GATE - Both inputs must be ready
+# PHASE 3 - KEYWORD EXTRACTION UI
+# Replaces the old pipeline gate placeholder
 # ─────────────────────────────────────────────
 
 st.divider()
 
-if jd_ready and resume_ready:
-    st.success("Both inputs are ready. Keyword Extraction (Phase 3) will go here next.")
-elif not jd_ready and not resume_ready:
+if not jd_ready and not resume_ready:
     st.info("Paste a job description and upload your resume to begin.")
 elif not jd_ready:
     st.info("Waiting for a valid job description.")
 elif not resume_ready:
     st.info("Waiting for a valid resume upload.")
+
+if jd_ready and resume_ready:
+
+    st.subheader("Step 3 - Keyword Extraction")
+
+    run_extraction = st.button(
+        "Run Keyword Extraction",
+        type="primary",
+        help="Sends the cleaned job description to gpt-4o and extracts structured keywords. Costs ~$0.01–$0.03."
+    )
+
+    if run_extraction:
+        # Clear previous result so stale data doesn't linger if the JD changed
+        st.session_state.keyword_json = None
+        with st.spinner("Extracting keywords from job description... (5–15 seconds)"):
+            try:
+                keyword_dict = extract_keywords(cleaned_jd)
+                st.session_state.keyword_json = keyword_dict
+                st.success("Keyword extraction complete.")
+            except ValueError as e:
+                st.error(f"Extraction failed: {str(e)}")
+
+    # Display results if extraction has run this session
+    if st.session_state.keyword_json is not None:
+        kw = st.session_state.keyword_json
+
+        # Role metadata strip
+        meta = kw.get("role_metadata", {})
+        st.markdown(
+            f"**Role:** {meta.get('job_title', 'Not extracted')}  |  "
+            f"**Experience Required:** {meta.get('required_years_experience', 'Not specified')}  |  "
+            f"**Industry:** {meta.get('industry', 'Not specified')}"
+        )
+
+        st.markdown("---")
+
+        # Metric cards
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                label="Must-Have Keywords",
+                value=len(kw.get("must_have", [])),
+                help="Non-negotiable ATS screening terms explicitly named in the JD"
+            )
+        with col2:
+            st.metric(
+                label="Good-to-Have Keywords",
+                value=len(kw.get("good_to_have", [])),
+                help="Secondary skills that strengthen match quality"
+            )
+        with col3:
+            st.metric(
+                label="Rare but Gold Keywords",
+                value=len(kw.get("rare_but_gold", [])),
+                help="High-signal differentiator phrases implied by the JD"
+            )
+
+        st.markdown("---")
+
+        # Keyword cards - one expander per keyword, grouped by category
+        st.markdown("#### Must-Have Keywords")
+        for item in kw.get("must_have", []):
+            with st.expander(f"**{item.get('keyword', 'Unknown')}** - {item.get('placement', '')}"):
+                st.write(f"**Why it matters:** {item.get('why_it_matters', '')}")
+                st.write(f"**Wording suggestion:** {item.get('wording_suggestion', '')}")
+
+        st.markdown("#### Good-to-Have Keywords")
+        for item in kw.get("good_to_have", []):
+            with st.expander(f"**{item.get('keyword', 'Unknown')}** - {item.get('placement', '')}"):
+                st.write(f"**Why it matters:** {item.get('why_it_matters', '')}")
+                st.write(f"**Wording suggestion:** {item.get('wording_suggestion', '')}")
+
+        st.markdown("#### Rare but Gold Keywords")
+        for item in kw.get("rare_but_gold", []):
+            with st.expander(f"**{item.get('keyword', 'Unknown')}** — {item.get('placement', '')}"):
+                st.write(f"**Why it matters:** {item.get('why_it_matters', '')}")
+                st.write(f"**Wording suggestion:** {item.get('wording_suggestion', '')}")
+
+        if kw.get("business_language"):
+            st.markdown("#### Role-Specific Business Language")
+            st.caption("Use these phrases naturally in rewritten bullets where your experience supports them.")
+            for phrase in kw.get("business_language", []):
+                st.markdown(f"- {phrase}")
+
+        with st.expander("Debug — Raw JSON Response", expanded=False):
+            st.json(kw)
