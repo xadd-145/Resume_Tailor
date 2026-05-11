@@ -1,0 +1,6 @@
+streamlit
+openai
+python-docx
+pdfplumber
+plotly
+python-dotenv
