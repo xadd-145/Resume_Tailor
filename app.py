@@ -1,13 +1,13 @@
 import streamlit as st
 import re
 import io
-import os          # ← PHASE 3 NEW
-import json        # ← PHASE 3 NEW
-import time        # ← PHASE 3 NEW
-import openai      # ← PHASE 3 NEW
+import os
+import json
+import time
+import openai
 from docx import Document
 import pdfplumber
-from dotenv import load_dotenv  # ← PHASE 3 NEW
+from dotenv import load_dotenv
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG - must be the first Streamlit call
@@ -23,13 +23,13 @@ st.markdown("Paste a job description and upload your resume. The engine will tai
 st.divider()
 
 # ─────────────────────────────────────────────
-# PHASE 3 NEW - OpenAI client initialization
+# OpenAI client initialization
 # ─────────────────────────────────────────────
 load_dotenv()
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ─────────────────────────────────────────────
-# PHASE 3 NEW - Session state initialization
+# Session state initialization
 # ─────────────────────────────────────────────
 if "keyword_json" not in st.session_state:
     st.session_state.keyword_json = None
@@ -465,7 +465,7 @@ def parse_pdf(file) -> tuple[dict, str]:
 
 
 # ─────────────────────────────────────────────
-# PHASE 3 NEW - EXTRACTION SYSTEM PROMPT
+# EXTRACTION SYSTEM PROMPT
 # ─────────────────────────────────────────────
 
 EXTRACTION_SYSTEM_PROMPT = """
@@ -525,7 +525,7 @@ Do not duplicate keywords across categories. Do not pad with generic filler. Eve
 
 
 # ─────────────────────────────────────────────
-# PHASE 3 NEW - KEYWORD EXTRACTION FUNCTION
+# KEYWORD EXTRACTION FUNCTION
 # ─────────────────────────────────────────────
 
 def extract_keywords(cleaned_jd: str) -> dict:
@@ -689,7 +689,7 @@ with col_right:
                 st.json(resume_object)
 
 # ─────────────────────────────────────────────
-# PHASE 3 - KEYWORD EXTRACTION UI
+# KEYWORD EXTRACTION UI
 # Replaces the old pipeline gate placeholder
 # ─────────────────────────────────────────────
 
